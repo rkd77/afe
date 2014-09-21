@@ -1,0 +1,463 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+# License: Public domain
+
+import array
+import gzip
+import os
+import sys
+import wx
+
+editor = None
+font_counter = 0
+font_dict = {}
+
+DEBIAN_DIR = '/usr/share/consolefonts'
+PLD_DIR = '/lib/kbd/consolefonts'
+WILDCARD = "PSF files (*.psf;*.psf.gz;*.psfu;*.psfu.gz)|*.psf;*.psf.gz;*.psfu;*.psfu.gz|All files|*"
+
+font_directory = DEBIAN_DIR
+
+class ResizeDialog(wx.Dialog):
+    def __init__(self, parent, y, x):
+        wx.Dialog.__init__(self, parent, -1, title = "Resize", style = wx.DEFAULT_DIALOG_STYLE)
+        labelWidth = wx.StaticText(self, -1, "Width")
+        labelHeight = wx.StaticText(self, -1, "Height")
+        self.spinWidth = wx.SpinCtrl(self, -1, value="width", min = 4, max = 32, initial = x)
+        self.spinHeight = wx.SpinCtrl(self, -1, value="height", min = 6, max = 32, initial = y)
+        okButton = wx.Button(self, wx.ID_OK)
+        cancelButton = wx.Button(self, wx.ID_CANCEL)
+        grid = wx.GridSizer(3, 2)
+        grid.Add(labelWidth)
+        grid.Add(self.spinWidth)
+        grid.Add(labelHeight)
+        grid.Add(self.spinHeight)
+        grid.Add(okButton)
+        grid.Add(cancelButton)
+        self.SetSizer(grid)
+        grid.Fit(self)
+        self.Fit()
+
+class BlackButton(wx.Button):
+    def __init__(self, parent, id=-1, label=wx.EmptyString, pos=wx.DefaultPosition, size=wx.DefaultSize, style=0, validator=wx.DefaultValidator, name=wx.ButtonNameStr):
+        wx.Button.__init__(self, parent, id, label, pos, size, style, validator, name)
+        self.Bind(wx.EVT_BUTTON, self.OnToggleClick)
+        self.value = False
+
+    def OnToggleClick(self, event):
+        self.SetValue(not self.value)
+
+    def SetValue(self, value):
+        self.value = value
+        if self.value:
+            self.SetBackgroundColour('#000')
+        else:
+            self.SetBackgroundColour('#FFF')
+
+    def GetValue(self):
+       return self.value
+
+class Editor(wx.Frame):
+    def __init__(self, filenames):
+        wx.Frame.__init__(self, None, -1, title="AFE", style= wx.MINIMIZE_BOX | wx.CAPTION | wx.CLOSE_BOX)
+        self.button = []
+        self.width = 8
+        self.height = 16
+        self.grid = wx.GridSizer(self.height, self.width, 2, 2)
+        self.font_id = -1
+        self.char_id = -1
+        self.add_buttons()
+        self.add_menu()
+        self.Fit()
+        for f in filenames:
+            Font(self, filename=f, load=False).Show()
+
+    def add_buttons(self):
+        tb = wx.ToolBar(self)
+        save_ch = wx.Button(tb, 32 * 32, label = "Save char")
+        self.Bind(wx.EVT_BUTTON, self.save_char, save_ch)
+        tb.AddControl(save_ch)
+        self.SetToolBar(tb)
+        for i in xrange(32 * 32):
+            b = BlackButton(self, i, size = (20, 20))
+            self.button.append(b)
+        self.grid.AddMany(self.button[:self.height * self.width])
+        for i in xrange(self.height * self.width, 32 * 32):
+            self.button[i].Show(False)
+        self.SetSizer(self.grid)
+        self.grid.Fit(self)
+
+    def add_menu(self):
+        mainMenu = wx.MenuBar()
+        menu = wx.Menu()
+        openItem = wx.MenuItem(menu, -1, 'Open\tCTRL-O', 'Open')
+        newItem = wx.MenuItem(menu, -1, 'New\tCTRL-N', 'New')
+        resizeItem = wx.MenuItem(menu, -1, 'Resize\tCTRL-R', 'Resize')
+        exitItem = wx.MenuItem(menu, -1, 'Quit\tCTRL-Q', 'Quit')
+        menu.AppendItem(openItem)
+        menu.AppendItem(newItem)
+        menu.AppendItem(resizeItem)
+        menu.AppendItem(exitItem)
+        self.Bind(wx.EVT_MENU, self.load, openItem)
+        self.Bind(wx.EVT_MENU, self.new, newItem)
+        self.Bind(wx.EVT_MENU, self.dlgResize, resizeItem)
+        self.Bind(wx.EVT_MENU, self.exit, exitItem)
+        mainMenu.Append(menu, "&File")
+        self.SetMenuBar(mainMenu)
+
+    def load(self, event):
+        f = Font(self, load = True)
+        f.Show()
+
+    def new(self, event):
+        f = Font(self, load = False)
+        f.Show()
+
+    def exit(self, event):
+        self.Destroy()
+
+    def resize(self, y, x):
+        old_x, old_y = self.width, self.height
+        old_char = self.get_data(self.width, self.height)
+        self.height = y
+        self.width = x
+        for i in xrange(32 * 32):
+            self.button[i].SetValue(False)
+        self.set_char(old_x, old_y, old_char)
+        m = y * x
+        self.grid.Clear()
+        self.grid.SetRows(self.height)
+        self.grid.SetCols(self.width)
+        self.grid.AddMany(self.button[:m])
+        for i in xrange(m):
+            self.button[i].Show(True)
+        for i in xrange(m, 32 * 32):
+            self.button[i].Show(False)
+        self.Fit()
+
+    def save_char(self, event):
+        global font_dict
+
+        if font_dict.has_key(self.font_id):
+            f = font_dict[self.font_id]
+            f.set_char(self.char_id)
+
+    def dlgResize(self, event):
+        dlg = ResizeDialog(self, self.height, self.width)
+        if dlg.ShowModal() == wx.ID_OK:
+            height = dlg.spinHeight.GetValue()
+            width = dlg.spinWidth.GetValue()
+            self.resize(height, width)
+        dlg.Destroy()
+
+    def set_char(self, width, height, data, font_id = -1, char_id = -1):
+        self.font_id = font_id
+        self.char_id = char_id
+        charsize = ((width + 7) // 8)
+
+        if height > self.height:
+            height = self.height
+        for i in xrange(height):
+            for j in xrange(charsize):
+                ind = i * charsize + j
+                for bit in xrange(7, -1, -1):
+                    indeks = 7 - bit + j * 8
+                    if indeks >= self.width:
+                        continue
+                    self.button[i * self.width + indeks].SetValue(data[ind] &\
+                        (1 << bit))
+
+    def get_data(self, width, height):
+        linesize = (width + 7) // 8
+        charsize = linesize * height
+        res = array.array('B', [0] * charsize)
+
+        if height > self.height:
+            height = self.height
+        for i in xrange(height):
+            for j in xrange(linesize):
+                ind = i * linesize + j
+                for bit in xrange(7, -1, -1):
+                    indeks = 7 - bit + j * 8
+                    if indeks >= self.width:
+                        continue
+                    if self.button[i * self.width + indeks].GetValue():
+                        res[ind] |= (1 << bit)
+        return res
+
+def mirror(a):
+    bit = 128
+    d = 1
+    w = 0
+    while bit:
+        if (a & bit):
+            w |= d
+        bit >>= 1
+        d <<= 1
+    return w
+
+class Font(wx.Frame):
+    def __init__(self, parent, filename = "", load = 0):
+        global font_counter, font_dict, editor, font_directory
+
+        wx.Frame.__init__(self, parent, -1, title="", pos= wx.DefaultPosition, style= wx.MINIMIZE_BOX | wx.CAPTION | wx.CLOSE_BOX)
+        font_counter += 1
+        font_dict[font_counter] = self
+        self.id = font_counter
+        self.filename = filename
+        if self.filename:
+           self.SetTitle('AFE ' + self.filename)
+           self.directory = ''
+        else:
+           self.directory = font_directory
+        self.psf = PSF(filename)
+        self.button = []
+        self.add_buttons()
+        self.add_menu()
+        if load:
+            self.load(None)
+        self.display()
+
+    def add_buttons(self):
+        self.grid = wx.GridSizer(self.psf.length / 32, 32, 2, 2)
+        for i in xrange(1024):
+            b = wx.BitmapButton(self, i, bitmap = wx.NullBitmap)
+            b.SetToolTip(wx.ToolTip(str(i) + ' ' + hex(i)))
+            self.Bind(wx.EVT_BUTTON, self.OnButton, b)
+            b.Bind(wx.EVT_MIDDLE_DOWN, self.OnMiddle)
+            b.Bind(wx.EVT_RIGHT_DOWN, self.OnRight)
+            self.button.append(b)
+        self.SetSizer(self.grid)
+
+    def add_menu(self):
+        mainMenu = wx.MenuBar()
+        menu = wx.Menu()
+        openItem = wx.MenuItem(menu, -1, 'Open\tCTRL-O', 'Open')
+        saveItem = wx.MenuItem(menu, -1, 'Save\tCTRL-S', 'Save')
+        saveAsItem = wx.MenuItem(menu, -1, 'Save As', 'Save As')
+        closeItem = wx.MenuItem(menu, -1, 'Close\tCTRL-W', 'Close')
+        menu.AppendItem(openItem)
+        menu.AppendItem(saveItem)
+        menu.AppendItem(saveAsItem)
+        menu.AppendItem(closeItem)
+        self.Bind(wx.EVT_MENU, self.load, openItem)
+        self.Bind(wx.EVT_MENU, self.save, saveItem)
+        self.Bind(wx.EVT_MENU, self.saveAs, saveAsItem)
+        self.Bind(wx.EVT_MENU, self.close, closeItem)
+        mainMenu.Append(menu, "&File")
+        self.SetMenuBar(mainMenu)
+        self.Bind(wx.EVT_CLOSE, self.close)
+
+    def get_bitmap(self, i):
+        bits = self.psf.get_data(i)
+        for i in xrange(len(bits)):
+            bits[i] = mirror(bits[i])
+        return wx.BitmapFromBits(bits.tostring(), self.psf.width,
+            self.psf.height)
+
+    def display(self):
+        self.grid.Clear()
+        for i in xrange(self.psf.length):
+            bitmap = self.get_bitmap(i)
+            self.button[i].SetBitmapLabel(bitmap)
+            self.button[i].Show(True)
+        for i in xrange(self.psf.length, 1024):
+            self.button[i].Show(False)
+        self.grid.SetRows(self.psf.length / 32)
+        self.grid.AddMany(self.button[:self.psf.length])
+        self.grid.Fit(self)
+        self.Fit()
+
+    def close(self, event):
+        global font_dict
+
+        del font_dict[self.id]
+        self.Destroy()
+
+    def load(self, event):
+        global font_directory
+
+        dlg = wx.FileDialog(self, message="Choose file", defaultDir=self.directory, defaultFile=self.filename, wildcard=WILDCARD,
+        style=wx.OPEN | wx.CHANGE_DIR)
+        if dlg.ShowModal() == wx.ID_OK:
+            self.filename = dlg.GetFilename()
+            self.directory = font_directory = dlg.GetDirectory()
+            self.psf.load(os.path.join(font_directory, self.filename))
+            self.display()
+            self.SetTitle("AFE " + self.filename)
+        dlg.Destroy()
+
+    def save(self, event):
+        self.psf.save(os.path.join(self.directory, self.filename))
+
+    def saveAs(self, event):
+        global font_directory
+
+        dlg = wx.FileDialog(self, message="Name the file", defaultDir=self.directory, defaultFile=self.filename, wildcard=WILDCARD,
+        style=wx.SAVE | wx.CHANGE_DIR)
+        if dlg.ShowModal() == wx.ID_OK:
+            self.filename = dlg.GetFilename()
+            font_directory = self.directory = dlg.GetDirectory()
+            self.psf.save(os.path.join(self.directory, self.filename))
+            self.SetTitle("AFE " + self.filename)
+        dlg.Destroy()
+
+    def OnButton(self, event):
+        global editor
+
+        i = event.GetId()
+        editor.set_char(self.psf.width, self.psf.height, self.psf.get_data(i), self.id, i)
+
+    def set_char(self, i):
+        data = editor.get_data(self.psf.width, self.psf.height)
+        self.psf.set_data(i, data)
+        bitmap = self.get_bitmap(i)
+        self.button[i].SetBitmapLabel(bitmap)
+
+    def OnMiddle(self, event):
+        b = event.GetEventObject()
+        i = b.GetId()
+        self.set_char(i)
+
+    def OnRight(self, event):
+        b = event.GetEventObject()
+        i = b.GetId()
+        old = self.psf.get_data(i)
+        self.set_char(i)
+        editor.set_char(self.psf.width, self.psf.height, old, self.id, i)
+
+class PSF:
+    def __init__(self, filename):
+        if not filename:
+            self.type = 2
+            self.header = array.array('B', (0x72, 0xb5, 0x4a, 0x86))
+            self.height = editor.height
+            self.width = editor.width
+            self.charsize = self.height * ((self.width + 7) // 8)
+
+            self.unicode_data = ""
+            self.length = 512
+            self.data = array.array('B', [0] * self.length * self.charsize)
+            self.rest = ""
+            self.header2 = array.array('B', [0] * 28)
+            self.create_header2()
+        else:
+            self.load(filename)
+
+    def get_data(self, i):
+        return self.data[i * self.charsize: (i+1) * self.charsize]
+
+    def set_data(self, i, data):
+        assert len(data) == self.charsize
+        self.data[i * self.charsize : (i + 1) * self.charsize] = data
+
+    def calc(self, offset):
+        return self.header2[offset] + (self.header2[offset + 1] << 8) + \
+            (self.header2[offset + 2] << 16) + (self.header2[offset + 3] << 24)
+
+    def zap(self, off, v):
+        self.header2[off] = v & 255
+        self.header2[off + 1] = (v >> 8) & 255
+        self.header2[off + 2] = (v >> 16) & 255
+        self.header2[off + 3] = (v >> 24) & 255
+
+    def create_header2(self):
+        self.zap(0, 0) # version
+        self.zap(4, 32) # headersize
+        self.zap(8, 0) # flags
+        self.zap(12, self.length) # length
+        self.zap(16, self.charsize)
+        self.zap(20, self.height)
+        self.zap(24, self.width)
+
+    def dump_info(self):
+        print("type = %d" % self.type)
+        print("charsize = %d" % self.charsize)
+        print("width = %d" % self.width)
+        print("height = %d" % self.height)
+        print("length = %d" % self.length)
+        print("has_unicode = %s" % self.has_unicode)
+
+    def load_psf_1(self, f):
+        self.type = 1
+        if self.header[2] & 1 == 1:
+            self.length = 512
+        else:
+            self.length = 256
+        if self.header[2] & 2 == 2:
+            self.has_unicode = True
+        else:
+            self.has_unicode = False
+        self.height = self.charsize = self.header[3]
+        self.width = 8
+        d = f.read(self.length * self.charsize)
+        self.data = array.array('B', d)
+        d = f.read()
+        self.unicode_data = array.array('B', d)
+
+    def load_psf_2(self, f):
+        self.type = 2
+        d = f.read(28)
+        self.header2 = array.array('B', d)
+        self.version = self.calc(0)
+        self.headersize = self.calc(4)
+        self.flags = self.calc(8)
+        self.length = self.calc(12)
+        self.charsize = self.calc(16)
+        self.height = self.calc(20)
+        self.width = self.calc(24)
+        self.has_unicode = self.flags & 1 == 1
+        self.rest_length = self.headersize - 32
+        d = f.read(self.rest_length)
+        self.rest = array.array('B', d)
+        d = f.read(self.length * self.charsize)
+        self.data = array.array('B', d)
+        d = f.read()
+        self.unicode_data = array.array('B', d)
+
+    def load(self, filename):
+        if filename.endswith(".gz"):
+            f = gzip.open(filename, "rb")
+        else:
+            f = open(filename, "rb")
+        self.type = 0
+        d = f.read(4)
+        self.header = array.array('B', d)
+        if (self.header[0] == 0x36 and self.header[1] == 0x04):
+            self.load_psf_1(f)
+        elif (self.header[0] == 0x72 and self.header[1] == 0xb5 and self.header[2] == 0x4a and self.header[3] == 0x86):
+            self.load_psf_2(f)
+        f.close()
+
+    def save(self, filename):
+        if filename.endswith(".gz"):
+            f = gzip.open(filename, "wb")
+        else:
+            f = open(filename, "wb")
+        if self.type == 1:
+            f.write(self.header)
+            f.write(self.data)
+            f.write(self.unicode_data)
+        elif self.type == 2:
+            f.write(self.header)
+            f.write(self.header2)
+            f.write(self.rest)
+            f.write(self.data)
+            f.write(self.unicode_data)
+        f.close()
+
+class MyApp(wx.App):
+
+    def OnInit(self):
+        global editor
+
+        editor = Editor(sys.argv[1:])
+        editor.Show(True)
+        self.SetTopWindow(editor)
+        return True
+
+if __name__ == "__main__":
+    if os.path.exists(PLD_DIR):
+        font_directory = PLD_DIR
+    app = MyApp(0)     # Create an instance of the application class
+    app.MainLoop()     # Tell it to start processing events
