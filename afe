@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 # License: Public domain
 
@@ -7,6 +7,8 @@ import gzip
 import os
 import sys
 import wx
+
+from wx.lib.agw.aui.aui_utilities import BitmapFromBits
 
 editor = None
 font_counter = 0
@@ -27,7 +29,7 @@ class ResizeDialog(wx.Dialog):
         self.spinHeight = wx.SpinCtrl(self, -1, value="height", min = 6, max = 32, initial = y)
         okButton = wx.Button(self, wx.ID_OK)
         cancelButton = wx.Button(self, wx.ID_CANCEL)
-        grid = wx.GridSizer(3, 2)
+        grid = wx.GridSizer(2)
         grid.Add(labelWidth)
         grid.Add(self.spinWidth)
         grid.Add(labelHeight)
@@ -78,11 +80,11 @@ class Editor(wx.Frame):
         self.Bind(wx.EVT_BUTTON, self.save_char, save_ch)
         tb.AddControl(save_ch)
         self.SetToolBar(tb)
-        for i in xrange(32 * 32):
+        for i in range(32 * 32):
             b = BlackButton(self, i, size = (20, 20))
             self.button.append(b)
         self.grid.AddMany(self.button[:self.height * self.width])
-        for i in xrange(self.height * self.width, 32 * 32):
+        for i in range(self.height * self.width, 32 * 32):
             self.button[i].Show(False)
         self.SetSizer(self.grid)
         self.grid.Fit(self)
@@ -94,10 +96,10 @@ class Editor(wx.Frame):
         newItem = wx.MenuItem(menu, -1, 'New\tCTRL-N', 'New')
         resizeItem = wx.MenuItem(menu, -1, 'Resize\tCTRL-R', 'Resize')
         exitItem = wx.MenuItem(menu, -1, 'Quit\tCTRL-Q', 'Quit')
-        menu.AppendItem(openItem)
-        menu.AppendItem(newItem)
-        menu.AppendItem(resizeItem)
-        menu.AppendItem(exitItem)
+        menu.Append(openItem)
+        menu.Append(newItem)
+        menu.Append(resizeItem)
+        menu.Append(exitItem)
         self.Bind(wx.EVT_MENU, self.load, openItem)
         self.Bind(wx.EVT_MENU, self.new, newItem)
         self.Bind(wx.EVT_MENU, self.dlgResize, resizeItem)
@@ -121,7 +123,7 @@ class Editor(wx.Frame):
         old_char = self.get_data(self.width, self.height)
         self.height = y
         self.width = x
-        for i in xrange(32 * 32):
+        for i in range(32 * 32):
             self.button[i].SetValue(False)
         self.set_char(old_x, old_y, old_char)
         m = y * x
@@ -129,9 +131,9 @@ class Editor(wx.Frame):
         self.grid.SetRows(self.height)
         self.grid.SetCols(self.width)
         self.grid.AddMany(self.button[:m])
-        for i in xrange(m):
+        for i in range(m):
             self.button[i].Show(True)
-        for i in xrange(m, 32 * 32):
+        for i in range(m, 32 * 32):
             self.button[i].Show(False)
         self.Fit()
 
@@ -157,10 +159,10 @@ class Editor(wx.Frame):
 
         if height > self.height:
             height = self.height
-        for i in xrange(height):
-            for j in xrange(charsize):
+        for i in range(height):
+            for j in range(charsize):
                 ind = i * charsize + j
-                for bit in xrange(7, -1, -1):
+                for bit in range(7, -1, -1):
                     indeks = 7 - bit + j * 8
                     if indeks >= self.width:
                         continue
@@ -174,10 +176,10 @@ class Editor(wx.Frame):
 
         if height > self.height:
             height = self.height
-        for i in xrange(height):
-            for j in xrange(linesize):
+        for i in range(height):
+            for j in range(linesize):
                 ind = i * linesize + j
-                for bit in xrange(7, -1, -1):
+                for bit in range(7, -1, -1):
                     indeks = 7 - bit + j * 8
                     if indeks >= self.width:
                         continue
@@ -219,8 +221,8 @@ class Font(wx.Frame):
         self.display()
 
     def add_buttons(self):
-        self.grid = wx.GridSizer(self.psf.length / 32, 32, 2, 2)
-        for i in xrange(1024):
+        self.grid = wx.GridSizer(self.psf.length // 32, 32, 2, 2)
+        for i in range(1024):
             b = wx.BitmapButton(self, i, bitmap = wx.NullBitmap)
             b.SetToolTip(wx.ToolTip(str(i) + ' ' + hex(i)))
             self.Bind(wx.EVT_BUTTON, self.OnButton, b)
@@ -236,10 +238,10 @@ class Font(wx.Frame):
         saveItem = wx.MenuItem(menu, -1, 'Save\tCTRL-S', 'Save')
         saveAsItem = wx.MenuItem(menu, -1, 'Save As', 'Save As')
         closeItem = wx.MenuItem(menu, -1, 'Close\tCTRL-W', 'Close')
-        menu.AppendItem(openItem)
-        menu.AppendItem(saveItem)
-        menu.AppendItem(saveAsItem)
-        menu.AppendItem(closeItem)
+        menu.Append(openItem)
+        menu.Append(saveItem)
+        menu.Append(saveAsItem)
+        menu.Append(closeItem)
         self.Bind(wx.EVT_MENU, self.load, openItem)
         self.Bind(wx.EVT_MENU, self.save, saveItem)
         self.Bind(wx.EVT_MENU, self.saveAs, saveAsItem)
@@ -250,20 +252,21 @@ class Font(wx.Frame):
 
     def get_bitmap(self, i):
         bits = self.psf.get_data(i)
-        for i in xrange(len(bits)):
+        for i in range(len(bits)):
             bits[i] = mirror(bits[i])
-        return wx.BitmapFromBits(bits.tostring(), self.psf.width,
-            self.psf.height)
+        return BitmapFromBits(bits.tobytes(), self.psf.width,
+            self.psf.height, wx.WHITE)
 
     def display(self):
         self.grid.Clear()
-        for i in xrange(self.psf.length):
+        for i in range(self.psf.length):
             bitmap = self.get_bitmap(i)
             self.button[i].SetBitmapLabel(bitmap)
+            self.button[i].SetBackgroundColour('#000')
             self.button[i].Show(True)
-        for i in xrange(self.psf.length, 1024):
+        for i in range(self.psf.length, 1024):
             self.button[i].Show(False)
-        self.grid.SetRows(self.psf.length / 32)
+        self.grid.SetRows(self.psf.length // 32)
         self.grid.AddMany(self.button[:self.psf.length])
         self.grid.Fit(self)
         self.Fit()
@@ -278,7 +281,7 @@ class Font(wx.Frame):
         global font_directory
 
         dlg = wx.FileDialog(self, message="Choose file", defaultDir=self.directory, defaultFile=self.filename, wildcard=WILDCARD,
-        style=wx.OPEN | wx.CHANGE_DIR)
+        style=wx.FD_OPEN | wx.FD_CHANGE_DIR)
         if dlg.ShowModal() == wx.ID_OK:
             self.filename = dlg.GetFilename()
             self.directory = font_directory = dlg.GetDirectory()
@@ -294,7 +297,7 @@ class Font(wx.Frame):
         global font_directory
 
         dlg = wx.FileDialog(self, message="Name the file", defaultDir=self.directory, defaultFile=self.filename, wildcard=WILDCARD,
-        style=wx.SAVE | wx.CHANGE_DIR)
+        style=wx.FD_SAVE | wx.FD_CHANGE_DIR)
         if dlg.ShowModal() == wx.ID_OK:
             self.filename = dlg.GetFilename()
             font_directory = self.directory = dlg.GetDirectory()
