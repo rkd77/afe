@@ -253,8 +253,8 @@ class Font(wx.Frame):
     def get_bitmap(self, i):
         bits = self.psf.get_data(i)
         for i in range(len(bits)):
-            bits[i] = mirror(bits[i])
-        return BitmapFromBits(bits.tobytes(), self.psf.width,
+            bits[i] = (255 - mirror(bits[i]))
+        return BitmapFromBits(bits.tobytes(), ((self.psf.width + 7) // 8) * 8,
             self.psf.height, wx.WHITE)
 
     def display(self):
