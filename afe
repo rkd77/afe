@@ -140,9 +140,11 @@ class Editor(wx.Frame):
     def save_char(self, event):
         global font_dict
 
-        if font_dict.has_key(self.font_id):
+        try:
             f = font_dict[self.font_id]
             f.set_char(self.char_id)
+        except Exception as e:
+            sys.stderr.write(str(e) + "\n")
 
     def dlgResize(self, event):
         dlg = ResizeDialog(self, self.height, self.width)
